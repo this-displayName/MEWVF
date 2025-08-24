@@ -38,12 +38,10 @@ The original MCEF (Minecraft Chromium Embedded Framework) only supports x86_64 a
 
 ### Download
 1. Download the appropriate version for your mod loader:
-   - [MEWVF-Forge-0.9.2.jar](https://github.com/yourusername/mewvf/releases/download/v0.9.2/mewvf-forge-0.9.2.jar)
-   - [MEWVF-Fabric-0.9.2.jar](https://github.com/yourusername/mewvf/releases/download/v0.9.2/mewvf-fabric-0.9.2.jar)
 
 2. Place the JAR file in your `mods` folder
 
-3. If using WebDisplays:
+4. If using WebDisplays:
    - Remove the original `mcef-forge-*.jar` file
    - Keep `webdisplays-*.jar` - it will automatically use MEWVF
 
@@ -276,9 +274,10 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Platform-specific WebView implementations (Android WebView, JavaFX, WebView2, WebKitGTK)
 
 ## Support
-Discord:
 
-## Roadmap
+Discord: TBA
+
+# Roadmap
 
 ### v0.9.3 (Next Release)
 - Improved error handling and recovery
