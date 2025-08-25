@@ -1,0 +1,509 @@
+
+public class MEWVFFabric implements ModInitializer, ClientModInitializer {
+    public static final String MODID = "mewvf";
+    public static final String VERSION = "0.9.2";
+    public static final String MC_VERSION = "1.20.1";
+    public static final String WEBVIEW_VERSION = "120.0.6099.129"; // Latest stable WebView
+    
+    private static volatile MEWVFFabric instance;
+    private static volatile boolean initialized = false;
+    private static final Logger LOGGER = LoggerFactory.getLogger("MEWVF");
+    private static PlatformType detectedPlatform;
+    
+    private static final Object INITIALIZATION_LOCK = new Object();
+    
+    @Override
+    public void onInitialize() {
+        instance = this;
+        
+        // Early platform detection
+        detectedPlatform = FabricPlatformDetector.detectPlatform();
+        LOGGER.info("MEWVF v{} detected platform: {}", VERSION, detectedPlatform);
+        LOGGER.info("MEWVF v{} common initialization for MC {}", VERSION, MC_VERSION);
+    }
+    
+    @Override
+    public void onInitializeClient() {
+        LOGGER.info("MEWVF v{} client initialization for {} with WebView {}", 
+            VERSION, detectedPlatform, WEBVIEW_VERSION);
+        
+        // Initialize on client startup with error handling
+        ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
+            try {
+                LOGGER.info("Minecraft client started - initializing MEWVF for {}", detectedPlatform);
+                initializeWebViewFramework();
+            } catch (Exception e) {
+                LOGGER.error("Failed to initialize MEWVF during client startup", e);
+            }
+        });
+        
+        // Register tick events with error handling
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            try {
+                FabricUniversalWebViewManager.tickAllBrowsers();
+            } catch (Exception e) {
+                LOGGER.error("Error during browser tick", e);
+            }
+        });
+        
+        // Register render events with error handling
+        ClientTickEvents.START_CLIENT_TICK.register(client -> {
+            try {
+                FabricUniversalWebViewManager.updateAllTextures();
+            } catch (Exception e) {
+                LOGGER.error("Error during texture update", e);
+            }
+        });
+        
+        // Register shutdown events with proper cleanup
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            try {
+                LOGGER.info("Minecraft stopping - cleaning up MEWVF");
+                cleanup();
+            } catch (Exception e) {
+                LOGGER.error("Error during MEWVF cleanup", e);
+            }
+        });
+        
+        // Register resource reload events with error handling
+        ResourceManagerHelper.get(ResourceType.CLIENT_RESOURCES).registerReloadListener(
+            new SimpleSynchronousResourceReloadListener() {
+                @Override
+                public Identifier getFabricId() {
+                    return new Identifier(MODID, "webview_resources");
+                }
+                
+                @Override
+                public void reload(ResourceManager manager) {
+                    try {
+                        LOGGER.info("Resource pack reload - refreshing WebView resources");
+                        FabricUniversalWebViewManager.refreshAllBrowsers();
+                    } catch (Exception e) {
+                        LOGGER.error("Error during resource reload", e);
+                    }
+                }
+            }
+        );
+        
+        LOGGER.info("MEWVF v{} client initialization completed for {}", VERSION, detectedPlatform);
+    }
+    
+    private static synchronized void initializeWebViewFramework() {
+        if (initialized) {
+            LOGGER.warn("MEWVF already initialized, skipping...");
+            return;
+        }
+        
+        synchronized (INITIALIZATION_LOCK) {
+            if (initialized) return;
+            
+            try {
+                // Platform compatibility check
+                if (!detectedPlatform.isSupported()) {
+                    LOGGER.error("MEWVF unsupported on platform: {} ({})", 
+                        detectedPlatform, System.getProperty("os.arch"));
+                    displayUnsupportedPlatformMessage();
+                    return;
+                }
+                
+                // Initialize core systems
+                FabricUniversalWebViewManager.initialize(detectedPlatform);
+                FabricMEWVFRegistry.initialize();
+                
+                // Register shutdown hook
+                Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                    try {
+                        cleanup();
+                    } catch (Exception e) {
+                        LOGGER.error("Error in shutdown hook", e);
+                    }
+                }));
+                
+                initialized = true;
+                LOGGER.info("MEWVF v{} initialized successfully for {}!", VERSION, detectedPlatform);
+                displaySuccessMessage();
+                
+            } catch (Exception e) {
+                LOGGER.error("MEWVF initialization failed on {}", detectedPlatform, e);
+                displayErrorMessage(e.getMessage());
+                throw new RuntimeException("MEWVF initialization failed", e);
+            }
+        }
+    }
+    
+    private static void displayUnsupportedPlatformMessage() {
+        String os = System.getProperty("os.name");
+        String arch = System.getProperty("os.arch");
+        
+        LOGGER.info("=== MEWVF Platform Support ===");
+        LOGGER.info("Current: {} on {}", os, arch);
+        LOGGER.info("Supported: Android ARM64, Apple Silicon, Windows ARM64, Linux ARM64");
+        LOGGER.info("For x86_64 systems, use original MCEF instead");
+        LOGGER.info("===============================");
+    }
+    
+    private static void displaySuccessMessage() {
+        LOGGER.info("=== MEWVF Ready ===");
+        LOGGER.info("Platform: {} (supported)", detectedPlatform);
+        LOGGER.info("WebView: {} (latest)", WEBVIEW_VERSION);
+        LOGGER.info("Framework ready for web browsing in Minecraft");
+        LOGGER.info("===================");
+    }
+    
+    private static void displayErrorMessage(String error) {
+        LOGGER.error("=== MEWVF Initialization Failed ===");
+        LOGGER.error("Platform: {}", detectedPlatform);
+        LOGGER.error("Error: {}", error);
+        LOGGER.error("Check device WebView support");
+        LOGGER.error("===================================");
+    }
+    
+    private static synchronized void cleanup() {
+        if (!initialized) return;
+        
+        synchronized (INITIALIZATION_LOCK) {
+            if (!initialized) return;
+            
+            try {
+                LOGGER.info("MEWVF cleanup starting...");
+                FabricUniversalWebViewManager.cleanup();
+                FabricMEWVFRegistry.cleanup();
+                initialized = false;
+                LOGGER.info("MEWVF cleanup completed");
+            } catch (Exception e) {
+                LOGGER.error("Error during cleanup", e);
+                initialized = false;
+            }
+        }
+    }
+    
+    // Public API with validation
+    public static synchronized MEWVFBrowser createBrowser(String id, int width, int height) {
+        if (id == null || id.trim().isEmpty()) {
+            throw new IllegalArgumentException("Browser ID cannot be null or empty");
+        }
+        if (width <= 0 || height <= 0) {
+            throw new IllegalArgumentException("Invalid dimensions: " + width + "x" + height);
+        }
+        if (!initialized) {
+            throw new IllegalStateException("MEWVF not initialized on platform: " + detectedPlatform);
+        }
+        
+        return FabricUniversalWebViewManager.createBrowser(id.trim(), width, height);
+    }
+    
+    public static MEWVFBrowser getBrowser(String id) {
+        if (id == null || id.trim().isEmpty()) return null;
+        return FabricUniversalWebViewManager.getBrowser(id.trim());
+    }
+    
+    public static synchronized void destroyBrowser(String id) {
+        if (id == null || id.trim().isEmpty()) {
+            LOGGER.warn("Attempted to destroy browser with null/empty ID");
+            return;
+        }
+        FabricUniversalWebViewManager.destroyBrowser(id.trim());
+    }
+    
+    // Getters
+    public static boolean isInitialized() { return initialized; }
+    public static PlatformType getPlatform() { return detectedPlatform; }
+    public static String getWebViewVersion() { return WEBVIEW_VERSION; }
+    
+    public static MEWVFFabric getInstance() {
+        if (instance == null) {
+            throw new IllegalStateException("MEWVF instance not initialized");
+        }
+        return instance;
+    }
+    
+    public static Logger getLogger() { return LOGGER; }
+}
+
+// Platform Types
+public enum PlatformType {
+    ANDROID_ARM64("Android ARM64", true, "Android devices with ARM64"),
+    MACOS_APPLE_SILICON("macOS Apple Silicon", true, "M1/M2/M3/M4 Macs"),
+    WINDOWS_ARM64("Windows ARM64", true, "ARM64 Windows PCs"),
+    LINUX_ARM64("Linux ARM64", true, "ARM64 Linux systems"),
+    
+    WINDOWS_X64("Windows x86_64", false, "Intel/AMD Windows"),
+    MACOS_INTEL("macOS Intel", false, "Intel Macs"), 
+    LINUX_X64("Linux x86_64", false, "Intel/AMD Linux"),
+    UNKNOWN("Unknown", false, "Unrecognized platform");
+    
+    private final String displayName;
+    private final boolean supported;
+    private final String description;
+    
+    PlatformType(String displayName, boolean supported, String description) {
+        this.displayName = displayName;
+        this.supported = supported;
+        this.description = description;
+    }
+    
+    public String getDisplayName() { return displayName; }
+    public boolean isSupported() { return supported; }
+    public String getDescription() { return description; }
+    
+    @Override
+    public String toString() {
+        return displayName + (supported ? " (supported)" : " (unsupported)");
+    }
+}
+
+// Fabric Platform Detector
+public class FabricPlatformDetector {
+    private static final Logger LOGGER = LoggerFactory.getLogger("MEWVF");
+    
+    public static PlatformType detectPlatform() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        String arch = System.getProperty("os.arch", "").toLowerCase();
+        String version = System.getProperty("os.version", "");
+        
+        LOGGER.info("Fabric Platform Detection:");
+        LOGGER.info("  OS: {}", os);
+        LOGGER.info("  Architecture: {}", arch);
+        LOGGER.info("  Version: {}", version);
+        LOGGER.info("  Java: {}", System.getProperty("java.version"));
+        
+        // Android detection
+        if (isAndroid(os, arch)) {
+            return PlatformType.ANDROID_ARM64;
+        }
+        
+        // macOS detection
+        if (os.contains("mac")) {
+            return isAppleSilicon(arch) ? PlatformType.MACOS_APPLE_SILICON : PlatformType.MACOS_INTEL;
+        }
+        
+        // Windows detection
+        if (os.contains("windows")) {
+            return isARM64(arch) ? PlatformType.WINDOWS_ARM64 : PlatformType.WINDOWS_X64;
+        }
+        
+        // Linux detection
+        if (os.contains("linux")) {
+            return isARM64(arch) ? PlatformType.LINUX_ARM64 : PlatformType.LINUX_X64;
+        }
+        
+        return PlatformType.UNKNOWN;
+    }
+    
+    private static boolean isAndroid(String os, String arch) {
+        return os.contains("android") || 
+               System.getProperty("java.vendor", "").toLowerCase().contains("android") ||
+               System.getProperty("java.vm.vendor", "").toLowerCase().contains("android") ||
+               (os.contains("linux") && hasAndroidClasses());
+    }
+    
+    private static boolean hasAndroidClasses() {
+        try {
+            Class.forName("android.os.Build");
+            return true;
+        } catch (ClassNotFoundException e) {
+            String vmName = System.getProperty("java.vm.name", "").toLowerCase();
+            return vmName.contains("dalvik") || vmName.contains("art");
+        }
+    }
+    
+    private static boolean isAppleSilicon(String arch) {
+        return arch.contains("aarch64") || arch.contains("arm64") || isRunningOnAppleSilicon();
+    }
+    
+    private static boolean isRunningOnAppleSilicon() {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("sysctl", "-n", "machdep.cpu.brand_string");
+            Process process = pb.start();
+            
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String cpuInfo = reader.readLine();
+                boolean completed = process.waitFor(5, TimeUnit.SECONDS);
+                
+                if (!completed) {
+                    process.destroyForcibly();
+                    return false;
+                }
+                
+                return process.exitValue() == 0 && cpuInfo != null && 
+                       cpuInfo.toLowerCase().contains("apple");
+            }
+        } catch (Exception e) {
+            LOGGER.debug("Apple Silicon detection failed: {}", e.getMessage());
+            return false;
+        }
+    }
+    
+    private static boolean isARM64(String arch) {
+        return arch.contains("aarch64") || arch.contains("arm64") || 
+               (arch.contains("arm") && arch.contains("64"));
+    }
+}
+
+// Fabric Universal WebView Manager
+public class FabricUniversalWebViewManager {
+    private static volatile PlatformType platform;
+    private static FabricWebViewProvider provider;
+    private static final ConcurrentHashMap<String, MEWVFBrowser> browsers = new ConcurrentHashMap<>();
+    private static ExecutorService executor;
+    private static volatile boolean initialized = false;
+    private static final Logger LOGGER = LoggerFactory.getLogger("MEWVF");
+    
+    private static final Object MANAGER_LOCK = new Object();
+    
+    public static void initialize(PlatformType platformType) {
+        if (initialized) return;
+        
+        synchronized (MANAGER_LOCK) {
+            if (initialized) return;
+            
+            platform = platformType;
+            
+            try {
+                // Create managed thread pool
+                executor = Executors.newFixedThreadPool(4, r -> {
+                    Thread t = new Thread(r, "MEWVF-Fabric-" + platformType.name());
+                    t.setDaemon(true);
+                    t.setUncaughtExceptionHandler((thread, ex) -> 
+                        LOGGER.error("Uncaught exception in {}", thread.getName(), ex));
+                    return t;
+                });
+                
+                // Initialize platform provider
+                provider = createProvider(platformType);
+                provider.initialize();
+                
+                initialized = true;
+                LOGGER.info("Fabric WebView manager initialized for {}", platformType);
+                
+            } catch (Exception e) {
+                LOGGER.error("Fabric WebView manager initialization failed for {}", platformType, e);
+                throw new RuntimeException("Fabric WebView manager init failed", e);
+            }
+        }
+    }
+    
+    private static FabricWebViewProvider createProvider(PlatformType platformType) {
+        switch (platformType) {
+            case ANDROID_ARM64: return new FabricAndroidWebViewProvider();
+            case MACOS_APPLE_SILICON: return new FabricMacOSWebViewProvider();
+            case WINDOWS_ARM64: return new FabricWindowsWebViewProvider();
+            case LINUX_ARM64: return new FabricLinuxWebViewProvider();
+            default: throw new UnsupportedOperationException("Unsupported: " + platformType);
+        }
+    }
+    
+    public static MEWVFBrowser createBrowser(String id, int width, int height) {
+        if (!initialized) {
+            throw new IllegalStateException("Fabric WebView manager not initialized");
+        }
+        
+        if (browsers.containsKey(id)) {
+            LOGGER.warn("Browser {} already exists, returning existing", id);
+            return browsers.get(id);
+        }
+        
+        try {
+            MEWVFBrowser browser = provider.createBrowser(id, width, height);
+            MEWVFBrowser existing = browsers.putIfAbsent(id, browser);
+            
+            if (existing != null) {
+                try {
+                    browser.destroy();
+                } catch (Exception e) {
+                    LOGGER.warn("Error cleaning up duplicate browser", e);
+                }
+                return existing;
+            }
+            
+            LOGGER.info("Created {} browser: {} ({}x{})", platform, id, width, height);
+            return browser;
+            
+        } catch (Exception e) {
+            LOGGER.error("Browser creation failed on {}: {}", platform, id, e);
+            throw new RuntimeException("Browser creation failed", e);
+        }
+    }
+    
+    public static MEWVFBrowser getBrowser(String id) {
+        return browsers.get(id);
+    }
+    
+    public static void destroyBrowser(String id) {
+        MEWVFBrowser browser = browsers.remove(id);
+        if (browser != null) {
+            try {
+                browser.destroy();
+                LOGGER.info("Destroyed browser: {}", id);
+            } catch (Exception e) {
+                LOGGER.error("Error destroying browser: {}", id, e);
+            }
+        }
+    }
+    
+    public static void tickAllBrowsers() {
+        if (!initialized || executor.isShutdown()) return;
+        
+        CompletableFuture.runAsync(() -> {
+            browsers.values().parallelStream().forEach(browser -> {
+                try {
+                    browser.tick();
+                } catch (Exception e) {
+                    LOGGER.error("Error ticking browser: {}", browser.getId(), e);
+                }
+            });
+        }, executor).exceptionally(throwable -> {
+            LOGGER.error("Error in browser tick task", throwable);
+            return null;
+        });
+    }
+    
+    public static void updateAllTextures() {
+        if (!initialized || executor.isShutdown()) return;
+        
+        CompletableFuture.runAsync(() -> {
+            browsers.values().parallelStream().forEach(browser -> {
+                try {
+                    browser.updateTexture();
+                } catch (Exception e) {
+                    LOGGER.error("Error updating texture: {}", browser.getId(), e);
+                }
+            });
+        }, executor).exceptionally(throwable -> {
+            LOGGER.error("Error in texture update task", throwable);
+            return null;
+        });
+    }
+    
+    public static void refreshAllBrowsers() {
+        browsers.values().forEach(browser -> {
+            try {
+                browser.refresh();
+            } catch (Exception e) {
+                LOGGER.error("Error refreshing browser: {}", browser.getId(), e);
+            }
+        });
+    }
+    
+    public static Map<String, MEWVFBrowser> getBrowsers() {
+        return Collections.unmodifiableMap(new HashMap<>(browsers));
+    }
+    
+    public static void cleanup() {
+        if (!initialized) return;
+        
+        synchronized (MANAGER_LOCK) {
+            if (!initialized) return;
+            
+            LOGGER.info("Cleaning up {} browsers on {}...", browsers.size(), platform);
+            
+            // Destroy browsers with timeout per browser
+            browsers.keySet().parallelStream().forEach(id -> {
+                try {
+                    destroyBrowser(id);
+                } catch (Exception e) {
+                    LOGGER.error("Error destroying browser during cleanup: {}", id, e);
+                }
+            });
+            
+     
